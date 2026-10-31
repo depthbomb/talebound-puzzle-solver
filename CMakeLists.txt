@@ -69,6 +69,9 @@ if(BUILD_TESTING)
     add_executable(flower_benchmark tests/flower_benchmark.cc)
     target_link_libraries(flower_benchmark PRIVATE flower)
 
+    add_executable(solver_benchmark tests/solver_benchmark.cc)
+    target_link_libraries(solver_benchmark PRIVATE mushroom tetris)
+
     add_executable(puzzle_ui_tests
         tests/ui_test_main.cc
         tests/mushroom_ui_tests.cc

@@ -11,11 +11,20 @@ namespace
     constexpr std::uint64_t FirstColumn = 0x0101010101010101ULL;
     constexpr std::uint64_t LastColumn  = 0x8080808080808080ULL;
 
+    struct CellPlacement
+    {
+    public:
+        std::uint64_t mask;
+        std::size_t index;
+    };
+
     struct PlacementTable
     {
     public:
+        typedef std::array<std::vector<CellPlacement>, static_cast<std::size_t>(TetrisPiece::Count)> PlacementsByType;
+
         std::vector<TetrisPlacement> placements;
-        std::array<std::vector<std::size_t>, TetrisBoard::MaxCells> byCell;
+        std::array<PlacementsByType, TetrisBoard::MaxCells> byCell;
     };
 
     struct SearchKey
@@ -73,7 +82,8 @@ namespace
                         result.placements.push_back(placement);
                         for (const auto cell : placement.cells)
                         {
-                            result.byCell[cell.row * TetrisBoard::Columns + cell.column].push_back(index);
+                            result.byCell[cell.row * TetrisBoard::Columns + cell.column][type].push_back(
+                                {placement.mask, index});
                         }
                     }
                 }
@@ -209,12 +219,25 @@ namespace
                 const int cell = std::countr_zero(free);
                 free &= free - 1;
                 std::size_t choices = 0;
-                for (const auto index : m_table.byCell[cell])
+                // Grouping by shape skips exhausted piece types without fetching their placements.
+                for (std::size_t type = 0; type < m_remaining.size() && choices < fewest; ++type)
                 {
-                    const auto& placement = m_table.placements[index];
-                    if (m_remaining[static_cast<std::size_t>(placement.piece)] > 0 && (placement.mask & occupied) == 0)
+                    if (m_remaining[type] == 0)
                     {
-                        ++choices;
+                        continue;
+                    }
+
+                    for (const auto placement : m_table.byCell[cell][type])
+                    {
+                        if ((placement.mask & occupied) == 0)
+                        {
+                            ++choices;
+                            // This cell can't beat the best one once it has that many choices.
+                            if (choices >= fewest)
+                            {
+                                break;
+                            }
+                        }
                     }
                 }
 
@@ -231,28 +254,34 @@ namespace
                 }
             }
 
-            for (const auto index : m_table.byCell[chosen])
+            for (std::size_t type = 0; type < m_remaining.size(); ++type)
             {
-                const auto& placement = m_table.placements[index];
-                const auto type       = static_cast<std::size_t>(placement.piece);
-                if (m_remaining[type] == 0 || (placement.mask & occupied) != 0)
+                if (m_remaining[type] == 0)
                 {
                     continue;
                 }
 
-                --m_remaining[type];
-                m_placed.push_back(placement);
-                if (search(occupied | placement.mask))
+                for (const auto placement : m_table.byCell[chosen][type])
                 {
-                    return true;
-                }
+                    if ((placement.mask & occupied) != 0)
+                    {
+                        continue;
+                    }
 
-                m_placed.pop_back();
-                ++m_remaining[type];
-                if (m_result.status != TetrisSolveStatus::NoSolution)
-                {
-                    // Cancellation or a time limit doesn't prove this position is a dead end.
-                    return false;
+                    --m_remaining[type];
+                    m_placed.push_back(m_table.placements[placement.index]);
+                    if (search(occupied | placement.mask))
+                    {
+                        return true;
+                    }
+
+                    m_placed.pop_back();
+                    ++m_remaining[type];
+                    if (m_result.status != TetrisSolveStatus::NoSolution)
+                    {
+                        // Cancellation or a time limit doesn't prove this position is a dead end.
+                        return false;
+                    }
                 }
             }
 
