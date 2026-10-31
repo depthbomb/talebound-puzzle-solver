@@ -1,0 +1,10 @@
+set(TALEBOUND_PRODUCT_NAME "Talebound Puzzle Solver")
+set(TALEBOUND_COMPANY_NAME "Caprine Logic")
+set(TALEBOUND_DESCRIPTION "Puzzle solvers for Talebound")
+set(TALEBOUND_BINARY_NAME "talebound-puzzle-solver")
+set(TALEBOUND_SOURCE_URL "https://github.com/depthbomb/talebound-puzzle-solver")
+set(TALEBOUND_VERSION "${PROJECT_VERSION}")
+set(TALEBOUND_VERSION_RESOURCE "${PROJECT_VERSION_MAJOR},${PROJECT_VERSION_MINOR},${PROJECT_VERSION_PATCH},0")
+
+configure_file(src/resources/metadata.h.in "${PROJECT_BINARY_DIR}/generated/metadata.h" @ONLY)
+configure_file(src/resources/version.rc.in "${PROJECT_BINARY_DIR}/generated/version.rc" @ONLY)

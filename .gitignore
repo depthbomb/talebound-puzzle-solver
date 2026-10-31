@@ -1,0 +1,6 @@
+/build/
+/bin/
+/out/
+/cmake-build-*/
+/.idea/
+/CMakeUserPresets.json

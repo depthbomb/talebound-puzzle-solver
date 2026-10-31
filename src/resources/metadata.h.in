@@ -1,0 +1,6 @@
+#pragma once
+
+inline constexpr char AppName[]      = "@TALEBOUND_PRODUCT_NAME@";
+inline constexpr char AppVersion[]   = "@TALEBOUND_VERSION@";
+inline constexpr char AppCompany[]   = "@TALEBOUND_COMPANY_NAME@";
+inline constexpr char AppSourceUrl[] = "@TALEBOUND_SOURCE_URL@";
