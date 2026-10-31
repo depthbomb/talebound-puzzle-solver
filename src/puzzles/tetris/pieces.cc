@@ -79,20 +79,24 @@ const std::vector<TetrisShape>& tetrisRotations(const TetrisPiece piece)
     return rotations.at(static_cast<std::size_t>(piece));
 }
 
-std::string validateTetrisInventory(const TetrisInventory& inventory)
+std::string validateTetrisInventory(const TetrisInventory& inventory, const TetrisVariant variant)
 {
     for (const int count : inventory)
     {
-        if (count < 0 || count > TetrisRequiredPieces)
+        if (count < 0)
         {
-            return "Each piece count must be between 0 and 8.";
+            return "Piece counts cannot be negative.";
         }
     }
 
-    const int total = std::accumulate(inventory.begin(), inventory.end(), 0);
-    if (total != TetrisRequiredPieces)
+    const TetrisBoard board(variant);
+    const auto total = std::accumulate(inventory.begin(), inventory.end(), std::int64_t{0});
+    if (total != board.requiredPieces())
     {
-        return "Enter exactly 8 pieces to fill all 32 cells (currently " + std::to_string(total) + ").";
+        const std::string problem = total < board.requiredPieces() ? "Not enough pieces. " : "Too many pieces. ";
+        return problem + std::to_string(total) + " pieces cover " + std::to_string(total * 4) + " of " +
+               std::to_string(board.cellCount()) + " cells.\nThis grid needs " +
+               std::to_string(board.requiredPieces()) + " pieces.";
     }
 
     return "";

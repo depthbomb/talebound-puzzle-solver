@@ -4,9 +4,11 @@
 
 #include <algorithm>
 #include <exception>
+#include <limits>
 #include <numeric>
 
 #include <wx/button.h>
+#include <wx/choice.h>
 #include <wx/clipbrd.h>
 #include <wx/dataobj.h>
 #include <wx/dcbuffer.h>
@@ -98,6 +100,17 @@ void TetrisPanel::createControls()
 {
     const int gap = FromDIP(12);
     auto* layout  = new wxBoxSizer(wxVERTICAL);
+
+    auto* variants = new wxBoxSizer(wxHORIZONTAL);
+    variants->Add(new wxStaticText(this, wxID_ANY, "&Variant:"), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, gap / 2);
+    m_variant = new wxChoice(this, wxID_ANY);
+    m_variant->SetName("tetris-variant");
+    m_variant->Append(TetrisBoard(TetrisVariant::Rectangle).name());
+    m_variant->Append(TetrisBoard(TetrisVariant::Plus).name());
+    m_variant->SetSelection(0);
+    variants->Add(m_variant);
+    layout->Add(variants, 0, wxLEFT | wxRIGHT | wxTOP, gap);
+
     auto* content = new wxBoxSizer(wxHORIZONTAL);
     {
         auto* inventoryBox = new wxStaticBoxSizer(wxVERTICAL, this, "Pieces");
@@ -110,7 +123,7 @@ void TetrisPanel::createControls()
             counts->Add(new wxStaticText(box, wxID_ANY, wxString::FromUTF8(tetrisPieceName(piece))), 0,
                 wxALIGN_CENTER_VERTICAL | wxRIGHT, gap);
             auto* count = new wxSpinCtrl(box, wxID_ANY, "0", wxDefaultPosition, FromDIP(wxSize(60, -1)),
-                wxSP_ARROW_KEYS, 0, TetrisRequiredPieces, 0);
+                wxSP_ARROW_KEYS, 0, std::numeric_limits<int>::max(), 0);
             count->SetName(wxString::Format("tetris-count-%zu", index));
             count->SetToolTip(wxString::Format("Number of %s pieces", wxString::FromUTF8(tetrisPieceName(piece))));
             m_counts[index] = count;
@@ -159,6 +172,13 @@ void TetrisPanel::createControls()
 
     layout->Add(content, 1, wxEXPAND | wxALL, gap);
     SetSizer(layout);
+
+    m_variant->Bind(wxEVT_CHOICE, [this](wxCommandEvent&)
+    {
+        m_board = TetrisBoard(static_cast<TetrisVariant>(m_variant->GetSelection()));
+        m_grid->setVariant(m_board.variant());
+        inventoryChanged();
+    });
 
     for (auto* count : m_counts)
     {
@@ -216,22 +236,12 @@ void TetrisPanel::inventoryChanged()
     }
 
     const auto pieces = inventory();
-    const int total   = std::accumulate(pieces.begin(), pieces.end(), 0);
-    m_total->SetLabel(wxString::Format("%d / 8 pieces", total));
+    const auto total  = std::accumulate(pieces.begin(), pieces.end(), std::int64_t{0});
+    m_total->SetLabel(wxString::Format("%lld pieces", static_cast<long long>(total)));
     m_grid->setPlacements({});
     m_instructions->Clear();
     m_copy->Disable();
-    const int difference = TetrisRequiredPieces - total;
-    if (difference == 0)
-    {
-        m_status->SetLabel("Ready.");
-    }
-    else
-    {
-        const int count = difference > 0 ? difference : -difference;
-        m_status->SetLabel(
-            wxString::Format("%s %d %s.", difference > 0 ? "Add" : "Remove", count, count == 1 ? "piece" : "pieces"));
-    }
+    m_status->SetLabel("Enter your pieces, then click Solve.");
     setSolving(false);
 }
 
@@ -244,7 +254,8 @@ void TetrisPanel::setSolving(const bool solving)
     }
 
     m_clear->Enable(!solving);
-    m_solve->Enable(!solving && validateTetrisInventory(inventory()).empty());
+    m_variant->Enable(!solving);
+    m_solve->Enable(!solving);
     m_cancel->Enable(solving);
     m_cancel->Show(solving);
     Layout();
@@ -258,7 +269,7 @@ void TetrisPanel::startSolve()
     }
 
     const auto pieces = inventory();
-    if (const auto error = validateTetrisInventory(pieces); !error.empty())
+    if (const auto error = validateTetrisInventory(pieces, m_board.variant()); !error.empty())
     {
         m_status->SetLabel(wxString::FromUTF8(error));
         return;
@@ -272,12 +283,12 @@ void TetrisPanel::startSolve()
 
     // Search the captured inventory in the background, then hand the result to the UI thread.
     m_worker = std::jthread(
-        [this, pieces](const std::stop_token stop)
+        [this, pieces, variant = m_board.variant()](const std::stop_token stop)
         {
             TetrisSolveResult result;
             try
             {
-                result = solveTetris(pieces, {}, stop);
+                result = solveTetris(pieces, variant, {}, stop);
             }
             catch (const std::exception&)
             {
@@ -333,7 +344,8 @@ void TetrisPanel::copySolution()
         return;
     }
 
-    const bool copied = wxTheClipboard->SetData(new wxTextDataObject("Tetris (4 x 8)\n" + m_instructions->GetValue()));
+    const auto title  = wxString::Format("Tetris (%s)\n", m_board.name());
+    const bool copied = wxTheClipboard->SetData(new wxTextDataObject(title + m_instructions->GetValue()));
     if (copied)
     {
         wxTheClipboard->Flush();

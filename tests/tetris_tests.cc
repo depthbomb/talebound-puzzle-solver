@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <bit>
 #include <chrono>
+#include <limits>
 #include <unordered_set>
 
 namespace
@@ -50,8 +51,8 @@ namespace
 
     unsigned int shapeBits(const TetrisShape& shape)
     {
-        int top = TetrisRows;
-        int left = TetrisColumns;
+        int top = 8;
+        int left = 8;
         for (const auto cell : shape)
         {
             top = std::min(top, cell.row);
@@ -68,22 +69,38 @@ namespace
         return result;
     }
 
-    void validateSolution(const TetrisInventory& inventory, const TetrisSolveResult& result)
+    void validateSolution(const TetrisInventory& inventory, const TetrisSolveResult& result,
+        const TetrisVariant variant = TetrisVariant::Rectangle)
     {
-        require(result.status == TetrisSolveStatus::Solved && result.placements.size() == 8, "Incomplete solution.");
+        const bool plus = variant == TetrisVariant::Plus;
+        const int rows = plus ? 8 : 4;
+        std::uint64_t expected = 0;
+        for (int row = 0; row < rows; ++row)
+        {
+            for (int column = 0; column < 8; ++column)
+            {
+                if (!plus || (row >= 2 && row < 6) || (column >= 2 && column < 6))
+                {
+                    expected |= std::uint64_t{1} << (row * 8 + column);
+                }
+            }
+        }
+        require(result.status == TetrisSolveStatus::Solved && result.placements.size() == std::popcount(expected) / 4,
+            "Incomplete solution.");
         TetrisInventory used = {};
-        std::uint32_t covered = 0;
+        std::uint64_t covered = 0;
         for (const auto& placement : result.placements)
         {
             const auto type = static_cast<std::size_t>(placement.piece);
             require(type < Shapes.size(), "Unknown piece type.");
             require(rotations(Shapes[type]).contains(shapeBits(placement.cells)), "A piece was reflected or distorted.");
             ++used[type];
-            std::uint32_t mask = 0;
+            std::uint64_t mask = 0;
             for (const auto cell : placement.cells)
             {
-                require(cell.row >= 0 && cell.row < 4 && cell.column >= 0 && cell.column < 8, "Out-of-bounds cell.");
-                const auto bit = 1U << (cell.row * 8 + cell.column);
+                require(cell.row >= 0 && cell.row < rows && cell.column >= 0 && cell.column < 8, "Out-of-bounds cell.");
+                const auto bit = std::uint64_t{1} << (cell.row * 8 + cell.column);
+                require((expected & bit) != 0, "Piece covers a missing corner.");
                 require((covered & bit) == 0, "Overlapping cells.");
                 covered |= bit;
                 mask |= bit;
@@ -92,7 +109,7 @@ namespace
             require(mask == placement.mask && std::popcount(mask) == 4, "Incorrect piece mask.");
         }
 
-        require(covered == 0xffffffffU && used == inventory, "Gaps or wrong piece counts.");
+        require(covered == expected && used == inventory, "Gaps or wrong piece counts.");
     }
 
     struct OraclePlacement
@@ -217,24 +234,69 @@ namespace
 
     void checkValidationAndLimits()
     {
-        for (const auto inventory : std::array<TetrisInventory, 4>{{{}, {0, 7, 0, 0, 0, 0}, {0, 9, 0, 0, 0, 0}, {-1, 8, 1, 0, 0, 0}}})
+        for (const auto variant : {TetrisVariant::Rectangle, TetrisVariant::Plus})
         {
-            const auto result = solveTetris(inventory);
-            require(result.status == TetrisSolveStatus::Invalid && !result.message.empty() && result.placements.empty(),
-                "Invalid inventory was accepted.");
-        }
+            const int required = variant == TetrisVariant::Rectangle ? 8 : 12;
+            for (const int count : {0, required - 1, required + 1})
+            {
+                const auto result = solveTetris({0, count}, variant);
+                const auto expected = count < required ? "Not enough pieces." : "Too many pieces.";
+                require(result.status == TetrisSolveStatus::Invalid && result.message.starts_with(expected)
+                    && result.placements.empty() && result.visitedNodes == 0, "Incorrect piece-count error.");
+            }
 
-        const TetrisInventory squares = {0, 8, 0, 0, 0, 0};
-        std::stop_source cancellation;
-        cancellation.request_stop();
-        require(solveTetris(squares, {}, cancellation.get_token()).status == TetrisSolveStatus::Cancelled,
-            "Cancellation was ignored.");
-        TetrisSearchOptions options;
-        options.maxNodes = 0;
-        require(solveTetris(squares, options).status == TetrisSolveStatus::LimitReached, "Node limit was ignored.");
-        options.maxNodes = 2000000;
-        options.timeLimit = std::chrono::milliseconds(0);
-        require(solveTetris(squares, options).status == TetrisSolveStatus::LimitReached, "Time limit was ignored.");
+            TetrisInventory huge;
+            huge.fill(std::numeric_limits<int>::max());
+            require(solveTetris(huge, variant).message.starts_with("Too many pieces."), "Piece count overflowed.");
+            require(solveTetris({-1, required, 1}, variant).status == TetrisSolveStatus::Invalid,
+                "Negative piece count was accepted.");
+
+            const TetrisInventory squares = {0, required};
+            std::stop_source cancellation;
+            cancellation.request_stop();
+            require(solveTetris(squares, variant, {}, cancellation.get_token()).status == TetrisSolveStatus::Cancelled,
+                "Cancellation was ignored.");
+            TetrisSearchOptions options;
+            options.maxNodes = 0;
+            require(solveTetris(squares, variant, options).status == TetrisSolveStatus::LimitReached,
+                "Node limit was ignored.");
+            options.maxNodes = 2000000;
+            options.timeLimit = std::chrono::milliseconds(0);
+            require(solveTetris(squares, variant, options).status == TetrisSolveStatus::LimitReached,
+                "Time limit was ignored.");
+        }
+    }
+
+    void checkPlusBoard()
+    {
+        const TetrisBoard board(TetrisVariant::Plus);
+        require(board.rows() == 8 && board.cellCount() == 48 && board.requiredPieces() == 12, "Incorrect plus dimensions.");
+        std::uint64_t expected = 0;
+        for (int row = -1; row <= 8; ++row)
+        {
+            for (int column = -1; column <= 8; ++column)
+            {
+                const bool present = row >= 0 && row < 8 && column >= 0 && column < 8 &&
+                    ((row >= 2 && row < 6) || (column >= 2 && column < 6));
+                require(board.hasCell({row, column}) == present, "Incorrect plus cell or corner.");
+                if (present)
+                {
+                    expected |= std::uint64_t{1} << (row * 8 + column);
+                }
+            }
+        }
+        require(board.mask() == expected, "Plus mask does not match its shape.");
+
+        // The mixed fixtures tile a 4x8 rectangle with two extra squares on each arm.
+        for (const auto inventory : std::array<TetrisInventory, 4>{{
+            {0, 12}, {0, 0, 0, 0, 0, 0, 12}, {2, 5, 1, 1, 1, 2}, {0, 4, 0, 0, 0, 0, 8}}})
+        {
+            validateSolution(inventory, solveTetris(inventory, TetrisVariant::Plus), TetrisVariant::Plus);
+        }
+        const auto impossible = solveTetris({1, 11}, TetrisVariant::Plus);
+        require(impossible.status == TetrisSolveStatus::NoSolution && impossible.placements.empty(),
+            "Odd T-piece count should be impossible on the plus board.");
+        validateSolution({0, 8}, solveTetris({0, 8}));
     }
 }
 
@@ -257,6 +319,7 @@ int main()
         }
 
         checkValidationAndLimits();
+        checkPlusBoard();
         const auto start = std::chrono::steady_clock::now();
         const Oracle oracle;
         TetrisInventory inventory = {};

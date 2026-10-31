@@ -35,7 +35,7 @@ add_library(flower STATIC
 )
 target_link_libraries(flower PUBLIC project_options)
 
-add_library(tetris STATIC src/puzzles/tetris/pieces.cc src/puzzles/tetris/solver.cc)
+add_library(tetris STATIC src/puzzles/tetris/board.cc src/puzzles/tetris/pieces.cc src/puzzles/tetris/solver.cc)
 target_link_libraries(tetris PUBLIC project_options)
 
 add_library(puzzle_ui STATIC

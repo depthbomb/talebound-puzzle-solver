@@ -33,6 +33,7 @@ public:
 
 TetrisSolveResult solveTetris(
     const TetrisInventory& inventory,
+    TetrisVariant variant = TetrisVariant::Rectangle,
     const TetrisSearchOptions& options = {},
     std::stop_token stop = {}
 );

@@ -8,6 +8,7 @@
 
 class TetrisGrid;
 class wxButton;
+class wxChoice;
 class wxSpinCtrl;
 class wxStaticText;
 class wxTextCtrl;
@@ -18,10 +19,12 @@ class TetrisPanel final : public wxPanel
 private:
     std::jthread m_worker;
     bool m_solving = false;
+    TetrisBoard m_board;
 
     std::array<wxSpinCtrl*, static_cast<std::size_t>(TetrisPiece::Count)> m_counts = {};
 
     TetrisGrid* m_grid         = nullptr;
+    wxChoice* m_variant        = nullptr;
     wxStaticText* m_total      = nullptr;
     wxStaticText* m_status     = nullptr;
     wxTextCtrl* m_instructions = nullptr;

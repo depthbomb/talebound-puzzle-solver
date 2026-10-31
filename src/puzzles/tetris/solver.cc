@@ -8,18 +8,35 @@
 
 namespace
 {
-    constexpr std::uint32_t FullBoard   = 0xffffffffU;
-    constexpr std::uint32_t FirstColumn = 0x01010101U;
-    constexpr std::uint32_t LastColumn  = 0x80808080U;
+    constexpr std::uint64_t FirstColumn = 0x0101010101010101ULL;
+    constexpr std::uint64_t LastColumn  = 0x8080808080808080ULL;
 
     struct PlacementTable
     {
     public:
         std::vector<TetrisPlacement> placements;
-        std::array<std::vector<std::size_t>, TetrisCellCount> byCell;
+        std::array<std::vector<std::size_t>, TetrisBoard::MaxCells> byCell;
     };
 
-    PlacementTable buildPlacements()
+    struct SearchKey
+    {
+    public:
+        std::uint64_t occupied;
+        std::uint32_t remaining;
+
+        bool operator==(const SearchKey&) const = default;
+    };
+
+    struct SearchKeyHash
+    {
+    public:
+        std::size_t operator()(const SearchKey& key) const
+        {
+            return std::hash<std::uint64_t>{}(key.occupied ^ (key.remaining * 0x9e3779b97f4a7c15ULL));
+        }
+    };
+
+    PlacementTable buildPlacements(const TetrisBoard& board)
     {
         PlacementTable result;
         for (std::size_t type = 0; type < static_cast<std::size_t>(TetrisPiece::Count); ++type)
@@ -35,23 +52,28 @@ namespace
                     width  = std::max(width, cell.column + 1);
                 }
 
-                for (int row = 0; row + height <= TetrisRows; ++row)
+                for (int row = 0; row + height <= board.rows(); ++row)
                 {
-                    for (int column = 0; column + width <= TetrisColumns; ++column)
+                    for (int column = 0; column + width <= TetrisBoard::Columns; ++column)
                     {
                         TetrisPlacement placement = {piece, shape, 0};
                         for (auto& cell : placement.cells)
                         {
                             cell.row += row;
                             cell.column += column;
-                            placement.mask |= std::uint32_t{1} << (cell.row * TetrisColumns + cell.column);
+                            placement.mask |= std::uint64_t{1} << (cell.row * TetrisBoard::Columns + cell.column);
+                        }
+
+                        if ((placement.mask & board.mask()) != placement.mask)
+                        {
+                            continue;
                         }
 
                         const auto index = result.placements.size();
                         result.placements.push_back(placement);
                         for (const auto cell : placement.cells)
                         {
-                            result.byCell[cell.row * TetrisColumns + cell.column].push_back(index);
+                            result.byCell[cell.row * TetrisBoard::Columns + cell.column].push_back(index);
                         }
                     }
                 }
@@ -61,16 +83,16 @@ namespace
         return result;
     }
 
-    bool regionsCanBeFilled(std::uint32_t free)
+    bool regionsCanBeFilled(std::uint64_t free)
     {
         while (free != 0)
         {
             // Start with the lowest set bit, then flood-fill its empty region using bit shifts.
-            std::uint32_t region = free & (0U - free);
+            std::uint64_t region = free & (0ULL - free);
             while (true)
             {
                 // Mask the side columns so a horizontal step can't wrap onto the next row.
-                const auto neighbors = (region << TetrisColumns) | (region >> TetrisColumns) |
+                const auto neighbors = (region << TetrisBoard::Columns) | (region >> TetrisBoard::Columns) |
                                        ((region & ~FirstColumn) >> 1) | ((region & ~LastColumn) << 1);
                 const auto expanded = region | (neighbors & free);
                 if (expanded == region)
@@ -101,7 +123,8 @@ namespace
         const std::stop_token m_stop;
         const std::chrono::steady_clock::time_point m_deadline;
         const PlacementTable& m_table;
-        std::unordered_set<std::uint64_t> m_dead;
+        const std::uint64_t m_boardMask;
+        std::unordered_set<SearchKey, SearchKeyHash> m_dead;
         std::vector<TetrisPlacement> m_placed;
         TetrisSolveResult m_result;
 
@@ -110,12 +133,13 @@ namespace
             const TetrisInventory& inventory,
             const TetrisSearchOptions& options,
             const std::stop_token stop,
+            const TetrisBoard& board,
             const PlacementTable& table
         ) : m_remaining(inventory), m_options(options), m_stop(stop),
-            m_deadline(std::chrono::steady_clock::now() + options.timeLimit), m_table(table)
+            m_deadline(std::chrono::steady_clock::now() + options.timeLimit), m_table(table), m_boardMask(board.mask())
         {
             m_dead.reserve(4096);
-            m_placed.reserve(TetrisRequiredPieces);
+            m_placed.reserve(board.requiredPieces());
         }
 
         TetrisSolveResult run()
@@ -136,7 +160,7 @@ namespace
         }
 
     private:
-        bool search(const std::uint32_t occupied)
+        bool search(const std::uint64_t occupied)
         {
             if (m_stop.stop_requested())
             {
@@ -157,20 +181,21 @@ namespace
                 return false;
             }
 
-            if (occupied == FullBoard)
+            if (occupied == m_boardMask)
             {
                 return true;
             }
 
-            // Four bits hold each remaining count (0..8); the low 32 bits hold the occupied cells.
-            std::uint64_t key = 0;
+            // The same filled cells can leave different pieces to place, so cache both parts of the state.
+            // Counts fit in four bits each (at most twelve); the board now needs its own 64-bit mask.
+            SearchKey key = {occupied, 0};
             for (const int count : m_remaining)
             {
-                key = (key << 4) | static_cast<std::uint64_t>(count);
+                key.remaining = (key.remaining << 4) | static_cast<std::uint32_t>(count);
             }
 
-            key = (key << TetrisCellCount) | occupied;
-            if (m_dead.contains(key) || !regionsCanBeFilled(~occupied))
+            const auto empty = m_boardMask & ~occupied;
+            if (m_dead.contains(key) || !regionsCanBeFilled(empty))
             {
                 return false;
             }
@@ -178,7 +203,7 @@ namespace
             // Try the tightest spot first; finding an impossible cell here saves a lot of guessing.
             int chosen         = -1;
             std::size_t fewest = std::numeric_limits<std::size_t>::max();
-            std::uint32_t free = ~occupied;
+            std::uint64_t free = empty;
             while (free != 0)
             {
                 const int cell = std::countr_zero(free);
@@ -239,11 +264,12 @@ namespace
 
 TetrisSolveResult solveTetris(
     const TetrisInventory& inventory,
+    const TetrisVariant variant,
     const TetrisSearchOptions& options,
     const std::stop_token stop
 )
 {
-    if (const auto error = validateTetrisInventory(inventory); !error.empty())
+    if (const auto error = validateTetrisInventory(inventory, variant); !error.empty())
     {
         TetrisSolveResult result;
         result.status  = TetrisSolveStatus::Invalid;
@@ -252,6 +278,8 @@ TetrisSolveResult solveTetris(
     }
 
     // Legal placements depend on the board shape, so all inventories can share this table.
-    static const auto table = buildPlacements();
-    return TetrisSearch(inventory, options, stop, table).run();
+    static const auto rectangle = buildPlacements(TetrisBoard(TetrisVariant::Rectangle));
+    static const auto plus      = buildPlacements(TetrisBoard(TetrisVariant::Plus));
+    const auto& table           = variant == TetrisVariant::Rectangle ? rectangle : plus;
+    return TetrisSearch(inventory, options, stop, TetrisBoard(variant), table).run();
 }
