@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 4.4)
 
 include(cmake/Dependencies.cmake)
-project(TaleboundPuzzleSolver VERSION 0.2.0 LANGUAGES CXX RC)
+project(TaleboundPuzzleSolver VERSION 0.2.1 LANGUAGES CXX RC)
 
 if(NOT WIN32 OR NOT MSVC)
     message(FATAL_ERROR "Talebound Puzzle Solver requires Windows and MSVC.")
