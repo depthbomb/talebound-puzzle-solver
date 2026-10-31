@@ -271,6 +271,33 @@ namespace
             "Cancellation during constraint search returned tentative paths as a solution.");
     }
 
+    void testThreePairPlacements()
+    {
+        std::mt19937 random(57109);
+        for (int trial = 0; trial < 128; ++trial)
+        {
+            FlowerBoard board(4, 4);
+            std::array<int, 16> cells;
+            for (int index = 0; index < 16; ++index)
+            {
+                cells[index] = index;
+            }
+            std::shuffle(cells.begin(), cells.end(), random);
+            for (int endpoint = 0; endpoint < 6; ++endpoint)
+            {
+                board.setColor({cells[endpoint] / 4, cells[endpoint] % 4}, endpoint / 2 + 1);
+            }
+            const bool possible = oracle(board);
+            const auto result = solveFlower(board);
+            require(result.status == (possible ? FlowerSolveStatus::Solved : FlowerSolveStatus::NoSolution),
+                "Three-pair solver disagrees with independent path enumeration.");
+            if (possible)
+            {
+                verifyPaths(board, result);
+            }
+        }
+    }
+
     void testInterruptionAtCompletion()
     {
         FlowerBoard board(1, 2);
@@ -359,6 +386,7 @@ int main()
         testValidationAndResize();
         testRulesAndLimits();
         testAllTwoPairPlacements();
+        testThreePairPlacements();
         testConstraintEngine();
         testReportedPuzzle();
         testInterruptionAtCompletion();

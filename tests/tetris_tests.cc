@@ -5,6 +5,8 @@
 #include <bit>
 #include <chrono>
 #include <limits>
+#include <random>
+#include <set>
 #include <unordered_set>
 
 namespace
@@ -114,7 +116,7 @@ namespace
 
     struct OraclePlacement
     {
-        std::uint32_t mask;
+        std::uint64_t mask;
         unsigned int countIncrement;
     };
 
@@ -126,20 +128,32 @@ namespace
         std::uint64_t nodes = 0;
 
     private:
-        std::array<std::vector<OraclePlacement>, 32> m_placements;
+        std::array<std::vector<OraclePlacement>, 64> m_placements;
+        std::uint64_t m_mask = 0;
 
     public:
-        Oracle()
+        explicit Oracle(const bool plus = false)
         {
+            const int rows = plus ? 8 : 4;
+            for (int row = 0; row < rows; ++row)
+            {
+                for (int column = 0; column < 8; ++column)
+                {
+                    if (!plus || (row >= 2 && row < 6) || (column >= 2 && column < 6))
+                    {
+                        m_mask |= std::uint64_t{1} << (row * 8 + column);
+                    }
+                }
+            }
             for (std::size_t type = 0; type < Shapes.size(); ++type)
             {
                 for (const auto shape : rotations(Shapes[type]))
                 {
-                    for (int top = 0; top < 4; ++top)
+                    for (int top = 0; top < rows; ++top)
                     {
                         for (int left = 0; left < 8; ++left)
                         {
-                            std::uint32_t mask = 0;
+                            std::uint64_t mask = 0;
                             bool fits = true;
                             for (int bit = 0; bit < 16; ++bit)
                             {
@@ -150,16 +164,16 @@ namespace
 
                                 const int row = top + bit / 4;
                                 const int column = left + bit % 4;
-                                if (row >= 4 || column >= 8)
+                                if (row >= rows || column >= 8)
                                 {
                                     fits = false;
                                     break;
                                 }
 
-                                mask |= 1U << (row * 8 + column);
+                                mask |= std::uint64_t{1} << (row * 8 + column);
                             }
 
-                            if (fits)
+                            if (fits && (mask & m_mask) == mask)
                             {
                                 m_placements[std::countr_zero(mask)].push_back({mask, 1U << (type * 4)});
                             }
@@ -168,20 +182,57 @@ namespace
                 }
             }
 
-            visit(0, 0);
+            if (!plus)
+            {
+                visit(0, 0);
+            }
+        }
+
+        bool canFill(const TetrisInventory& inventory) const
+        {
+            unsigned int counts = 0;
+            for (std::size_t type = 0; type < inventory.size(); ++type)
+            {
+                counts |= static_cast<unsigned int>(inventory[type]) << (type * 4);
+            }
+            std::set<std::pair<std::uint64_t, unsigned int>> dead;
+            const auto search = [&](auto&& self, const std::uint64_t occupied, const unsigned int remaining) -> bool
+            {
+                if (occupied == m_mask)
+                {
+                    return remaining == 0;
+                }
+                const auto key = std::make_pair(occupied, remaining);
+                if (dead.contains(key))
+                {
+                    return false;
+                }
+                for (const auto placement : m_placements[std::countr_zero(m_mask & ~occupied)])
+                {
+                    const bool available = ((remaining / placement.countIncrement) & 15U) != 0;
+                    if (available && (placement.mask & occupied) == 0 &&
+                        self(self, occupied | placement.mask, remaining - placement.countIncrement))
+                    {
+                        return true;
+                    }
+                }
+                dead.insert(key);
+                return false;
+            };
+            return search(search, 0, counts);
         }
 
     private:
-        void visit(const std::uint32_t occupied, const unsigned int counts)
+        void visit(const std::uint64_t occupied, const unsigned int counts)
         {
             ++nodes;
-            if (occupied == 0xffffffffU)
+            if (occupied == m_mask)
             {
                 feasible.insert(counts);
                 return;
             }
 
-            for (const auto placement : m_placements[std::countr_zero(~occupied)])
+            for (const auto placement : m_placements[std::countr_zero(m_mask & ~occupied)])
             {
                 if ((placement.mask & occupied) == 0)
                 {
@@ -298,6 +349,32 @@ namespace
             "Odd T-piece count should be impossible on the plus board.");
         validateSolution({0, 8}, solveTetris({0, 8}));
     }
+
+    void checkPlusInventories()
+    {
+        const Oracle oracle(true);
+        std::mt19937 random(49613);
+        for (int trial = 0; trial < 64; ++trial)
+        {
+            TetrisInventory inventory = {};
+            for (int piece = 0; piece < 12; ++piece)
+            {
+                ++inventory[random() % inventory.size()];
+            }
+            const bool possible = oracle.canFill(inventory);
+            const auto result = solveTetris(inventory, TetrisVariant::Plus);
+            require(result.status == (possible ? TetrisSolveStatus::Solved : TetrisSolveStatus::NoSolution),
+                "Plus solver disagrees with independent first-cell tiling search.");
+            if (possible)
+            {
+                validateSolution(inventory, result, TetrisVariant::Plus);
+            }
+            else
+            {
+                require(result.placements.empty(), "Impossible plus inventory returned placements.");
+            }
+        }
+    }
 }
 
 int main()
@@ -320,6 +397,7 @@ int main()
 
         checkValidationAndLimits();
         checkPlusBoard();
+        checkPlusInventories();
         const auto start = std::chrono::steady_clock::now();
         const Oracle oracle;
         TetrisInventory inventory = {};
