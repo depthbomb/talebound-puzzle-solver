@@ -285,6 +285,12 @@ FlowerSolveStatus FlowerConstraints::solve(
         if (progress && std::chrono::steady_clock::now() >= nextPreview)
         {
             progress();
+            // A callback can cancel or use up the remaining time, even on the final assignment.
+            if (interrupted())
+            {
+                return m_status;
+            }
+
             nextPreview = std::chrono::steady_clock::now() + std::chrono::milliseconds(33);
         }
 

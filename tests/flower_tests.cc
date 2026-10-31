@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <functional>
 #include <random>
+#include <thread>
 
 namespace
 {
@@ -270,6 +271,25 @@ namespace
             "Cancellation during constraint search returned tentative paths as a solution.");
     }
 
+    void testInterruptionAtCompletion()
+    {
+        FlowerBoard board(1, 2);
+        board.setColor({0, 0}, 1);
+        board.setColor({0, 1}, 1);
+        std::stop_source stop;
+        FlowerSearchOptions options;
+        options.progress = [&](const FlowerSearchPreview&) { stop.request_stop(); };
+        const auto cancelled = solveFlower(board, options, stop.get_token());
+        require(cancelled.status == FlowerSolveStatus::Cancelled && cancelled.paths[0].empty(),
+            "Cancellation from the final preview was ignored.");
+
+        options.timeLimit = std::chrono::milliseconds(30);
+        options.progress = [&](const FlowerSearchPreview&) { std::this_thread::sleep_for(options.timeLimit * 2); };
+        const auto expired = solveFlower(board, options);
+        require(expired.status == FlowerSolveStatus::LimitReached && expired.paths[0].empty(),
+            "A final preview that exhausted the time budget was ignored.");
+    }
+
     void testConstraintEngine()
     {
         std::mt19937 random(42941);
@@ -341,5 +361,6 @@ int main()
         testAllTwoPairPlacements();
         testConstraintEngine();
         testReportedPuzzle();
+        testInterruptionAtCompletion();
     });
 }
